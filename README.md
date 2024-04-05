@@ -14,11 +14,13 @@ There is also a web admin dashboard for meilisync [meilisync-admin](https://gith
 
 ## Install
 
-Just install from pypi:
+Install from pypi:
 
-```shell
-pip install meilisync
-```
+- `pip install meilisync[mysql]` for MySQL.
+- `pip install meilisync[postgres]` for PostgreSQL.
+- `pip install meilisync[mongo]` for MongoDB.
+- `pip install meilisync[all]` for all.
+- `pip install meilisync[redis]` for redis progress.
 
 ## Use docker (Recommended)
 
