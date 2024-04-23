@@ -1,4 +1,5 @@
 import datetime
+from decimal import Decimal
 from typing import Optional
 
 from pydantic import BaseModel
@@ -22,6 +23,8 @@ class Event(ProgressEvent):
                 v = int(v.timestamp())
             elif isinstance(v, datetime.date):
                 v = str(v)
+            elif isinstance(v, Decimal):
+                v = float(v)
             if fields_mapping is not None and k in fields_mapping:
                 real_k = fields_mapping[k] or k
                 data[real_k] = v
