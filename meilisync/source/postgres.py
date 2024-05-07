@@ -95,7 +95,7 @@ class Postgres(Source):
             kind = change.get("kind")
             table = change.get("table")
             if table not in self.tables:
-                return
+                continue
             columnnames = change.get("columnnames", [])
             columnvalues = change.get("columnvalues", [])
             columntypes = change.get("columntypes", [])
