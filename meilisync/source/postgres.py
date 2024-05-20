@@ -130,6 +130,10 @@ class Postgres(Source):
                 )
             )
 
+            # Report success to the server to avoid a “disk full” condition.
+            # https://www.psycopg.org/docs/extras.html#psycopg2.extras.ReplicationCursor.consume_stream
+            msg.cursor.send_feedback(flush_lsn=msg.data_start)
+
     async def get_count(self, sync: Sync):
         with self.conn_dict.cursor() as cur:
             cur.execute(f"SELECT COUNT(*) FROM {sync.table}")
