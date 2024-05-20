@@ -118,15 +118,13 @@ class MySQL(Source):
                         continue
                     self.progress["master_log_file"] = self.stream._master_log_file
                     self.progress["master_log_position"] = self.stream._master_log_position
-                    yield from (
-                        Event(
+                    for data in data_list:
+                        yield Event(
                             type=event_type,
                             table=event.table,
                             data=data,
                             progress=self.progress,
                         )
-                        for data in data_list
-                    )
             except OperationalError as e:
                 logger.exception(f"Binlog stream error: {e}, sleep 10s and retry...")
                 await asyncio.sleep(10)
