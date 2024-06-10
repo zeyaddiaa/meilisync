@@ -10,7 +10,8 @@ class EventCollection:
     def add_event(self, sync: Sync, event: Event):
         pk = event.data[sync.pk]
         self._events.setdefault(sync, {})
-        self._events[sync][pk] = event
+        self._events[sync].setdefault(pk, [])
+        self._events[sync][pk].append(event)
 
     @property
     def size(self):
@@ -21,16 +22,17 @@ class EventCollection:
         updated_events = {}
         created_events = {}
         deleted_events = {}
-        for sync, events in self._events.items():
+        for sync, pk_events_dict in self._events.items():
             updated_events[sync] = []
             created_events[sync] = []
             deleted_events[sync] = []
-            for event in events.values():
-                if event.type == EventType.create:
-                    created_events[sync].append(event)
-                elif event.type == EventType.update:
-                    updated_events[sync].append(event)
-                elif event.type == EventType.delete:
-                    deleted_events[sync].append(event)
+            for events in pk_events_dict.values():
+                for event in events:
+                    if event.type == EventType.create:
+                        created_events[sync].append(event)
+                    elif event.type == EventType.update:
+                        updated_events[sync].append(event)
+                    elif event.type == EventType.delete:
+                        deleted_events[sync].append(event)
         self._events = {}
         return created_events, updated_events, deleted_events
