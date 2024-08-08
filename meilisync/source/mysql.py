@@ -107,23 +107,24 @@ class MySQL(Source):
                 async for event in self.stream:
                     if isinstance(event, WriteRowsEvent):
                         event_type = EventType.create
-                        data = event.rows[0]["values"]
+                        data_list = [row["values"] for row in event.rows]
                     elif isinstance(event, UpdateRowsEvent):
                         event_type = EventType.update
-                        data = event.rows[0]["after_values"]
+                        data_list = [row["after_values"] for row in event.rows]
                     elif isinstance(event, DeleteRowsEvent):
                         event_type = EventType.delete
-                        data = event.rows[0]["values"]
+                        data_list = [row["values"] for row in event.rows]
                     else:
                         continue
                     self.progress["master_log_file"] = self.stream._master_log_file
                     self.progress["master_log_position"] = self.stream._master_log_position
-                    yield Event(
-                        type=event_type,
-                        table=event.table,
-                        data=data,
-                        progress=self.progress,
-                    )
+                    for data in data_list:
+                        yield Event(
+                            type=event_type,
+                            table=event.table,
+                            data=data,
+                            progress=self.progress,
+                        )
             except OperationalError as e:
                 logger.exception(f"Binlog stream error: {e}, sleep 10s and retry...")
                 await asyncio.sleep(10)
