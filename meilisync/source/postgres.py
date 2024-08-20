@@ -74,7 +74,7 @@ class Postgres(Source):
         def _():
             with self.conn_dict.cursor() as cur:
                 cur.execute(
-                    f"SELECT \"{fields}\" FROM \"{sync.table}\" ORDER BY "
+                    f"SELECT {fields} FROM \"{sync.table}\" ORDER BY "
                     f"\"{sync.pk}\" LIMIT {size} OFFSET {offset}"
                 )
                 return cur.fetchall()
