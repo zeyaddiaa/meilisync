@@ -66,7 +66,7 @@ class Postgres(Source):
 
     async def get_full_data(self, sync: Sync, size: int):
         if sync.fields:
-            fields = ", ".join(f"{field} as {sync.fields[field] or field}" for field in sync.fields)
+            fields = ", ".join(f"\"{field}\" as \"{sync.fields[field] or field}\"" for field in sync.fields)
         else:
             fields = "*"
         offset = 0
@@ -74,8 +74,8 @@ class Postgres(Source):
         def _():
             with self.conn_dict.cursor() as cur:
                 cur.execute(
-                    f"SELECT {fields} FROM {sync.table} ORDER BY "
-                    f"{sync.pk} LIMIT {size} OFFSET {offset}"
+                    f"SELECT \"{fields}\" FROM \"{sync.table}\" ORDER BY "
+                    f"\"{sync.pk}\" LIMIT {size} OFFSET {offset}"
                 )
                 return cur.fetchall()
 
@@ -141,7 +141,7 @@ class Postgres(Source):
 
     async def get_count(self, sync: Sync):
         with self.conn_dict.cursor() as cur:
-            cur.execute(f"SELECT COUNT(*) FROM {sync.table}")
+            cur.execute(f"SELECT COUNT(*) FROM \"{sync.table}\"")
             ret = cur.fetchone()
             return ret[0]
 
