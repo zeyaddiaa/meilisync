@@ -196,15 +196,27 @@ class Postgres(Source):
         """Check and manage replication slots if they exceed the max allowed."""
         def _drop_slots():
             with self.conn.cursor() as cur:
-            # Retrieve all replication slots that start with 'meilisync_'
-                cur.execute("SELECT slot_name FROM pg_replication_slots WHERE slot_name LIKE 'meilisync_%'")
+                # Retrieve all replication slots that start with 'meilisync_'
+                cur.execute("SELECT slot_name, active_pid FROM pg_replication_slots WHERE slot_name LIKE 'meilisync_%'")
                 meilisync_slots = cur.fetchall()
 
-                # Drop each of the retrieved slots
-                for slot in meilisync_slots:
-                    cur.execute(f"SELECT pg_drop_replication_slot('{slot[0]}')")
+                for slot_name, active_pid in meilisync_slots:
+                    if active_pid:
+                        # Terminate the session
+                        try:
+                            cur.execute(f"SELECT pg_terminate_backend({active_pid});")
+                        except psycopg2.Error as e:
+                            pass
 
+                    # Try to drop the slot after terminating the session
+                    try:
+                        cur.execute(f"SELECT pg_drop_replication_slot('{slot_name}');")
+                    except psycopg2.errors.ObjectInUse:
+                        pass
+                    except psycopg2.Error as e:
+                        pass
         await asyncio.get_event_loop().run_in_executor(None, _drop_slots)
+
         
     def _ping(self):
         with self.conn_dict.cursor() as cur:
