@@ -34,7 +34,6 @@ class CustomDictCursor(psycopg2.extras.RealDictCursor):
 
 class Postgres(Source):
     type = SourceType.postgres
-    slot = f"meilisync_{uuid.uuid4().hex}" 
 
     def __init__(
         self,
@@ -46,6 +45,8 @@ class Postgres(Source):
         self.conn = psycopg2.connect(**self.kwargs, connection_factory=LogicalReplicationConnection)
         self.cursor = self.conn.cursor()
         self.queue = None
+        self.slot = self._generate_unique_slot_name()
+        
         if self.progress:
             self.start_lsn = self.progress["start_lsn"]
         else:
@@ -86,7 +87,23 @@ class Postgres(Source):
                 break
             offset += size
             yield ret
+            
+    def _generate_unique_slot_name(self):
+        base_slot_name = f"meilisync_{uuid.uuid4().hex}"
+        slot_name = base_slot_name
 
+        # Check if slot already exists and is active
+        while True:
+            self.cursor.execute(f"SELECT active_pid FROM pg_replication_slots WHERE slot_name = '{slot_name}'")
+            slot_info = self.cursor.fetchone()
+
+            if slot_info and slot_info[0]:  # Slot is active
+                print(f"Slot {slot_name} is already in use by PID {slot_info[0]}, generating a new slot name.")
+                slot_name = f"meilisync_{uuid.uuid4().hex}"  # Generate a new unique slot name
+            else:
+                print(f"Using slot name {slot_name}.")
+                return slot_name
+            
     def _consumer(self, msg: ReplicationMessage):
         payload = json.loads(msg.payload)
         next_lsn = payload["nextlsn"]
@@ -151,7 +168,9 @@ class Postgres(Source):
         try:
             self.cursor.create_replication_slot(self.slot, output_plugin="wal2json")
         except psycopg2.errors.DuplicateObject:  # type: ignore
-            pass
+            self.slot = self._generate_unique_slot_name()
+            self.cursor.create_replication_slot(self.slot, output_plugin="wal2json")
+            
         self.cursor.start_replication(
             slot_name=self.slot,
             decode=True,
