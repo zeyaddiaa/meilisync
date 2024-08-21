@@ -34,7 +34,6 @@ class CustomDictCursor(psycopg2.extras.RealDictCursor):
 
 class Postgres(Source):
     type = SourceType.postgres
-    slot = "meilisync"
 
     def __init__(
         self,
@@ -46,6 +45,7 @@ class Postgres(Source):
         self.conn = psycopg2.connect(**self.kwargs, connection_factory=LogicalReplicationConnection)
         self.cursor = self.conn.cursor()
         self.queue = None
+        self.slot = self._generate_unique_slot_name()
         
         if self.progress:
             self.start_lsn = self.progress["start_lsn"]
@@ -169,7 +169,9 @@ class Postgres(Source):
         try:
             self.cursor.create_replication_slot(self.slot, output_plugin="wal2json")
         except psycopg2.errors.DuplicateObject:  # type: ignore
-            pass            
+            self.slot = self._generate_unique_slot_name()
+            self.cursor.create_replication_slot(self.slot, output_plugin="wal2json")
+
         self.cursor.start_replication(
             slot_name=self.slot,
             decode=True,
@@ -195,12 +197,12 @@ class Postgres(Source):
         def _drop_slots():
             with self.conn.cursor() as cur:
             # Retrieve all replication slots that start with 'meilisync_'
-                cur.execute("SELECT slot_name FROM pg_replication_slots WHERE slot_name LIKE 'meilisync';")
+                cur.execute("SELECT slot_name FROM pg_replication_slots WHERE slot_name LIKE 'meilisync_%'")
                 meilisync_slots = cur.fetchall()
 
                 # Drop each of the retrieved slots
                 for slot in meilisync_slots:
-                    cur.execute(f"SELECT pg_drop_replication_slot('{slot[0]}');")
+                    cur.execute(f"SELECT pg_drop_replication_slot('{slot[0]}')")
 
         await asyncio.get_event_loop().run_in_executor(None, _drop_slots)
         
