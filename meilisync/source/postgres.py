@@ -13,6 +13,7 @@ from meilisync.schemas import Event, ProgressEvent
 from meilisync.settings import Sync
 from meilisync.source import Source
 
+import uuid
 
 class CustomDictRow(psycopg2.extras.RealDictRow):
     def __getitem__(self, key):
@@ -33,7 +34,7 @@ class CustomDictCursor(psycopg2.extras.RealDictCursor):
 
 class Postgres(Source):
     type = SourceType.postgres
-    slot = "meilisync"
+    slot = str(uuid.uuid4()) 
 
     def __init__(
         self,
