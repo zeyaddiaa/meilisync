@@ -165,12 +165,11 @@ class Postgres(Source):
 
     async def __aiter__(self):
         self.queue = Queue()
+        await self._manage_replication_slots() 
         try:
             self.cursor.create_replication_slot(self.slot, output_plugin="wal2json")
         except psycopg2.errors.DuplicateObject:  # type: ignore
-            self.slot = self._generate_unique_slot_name()
-            self.cursor.create_replication_slot(self.slot, output_plugin="wal2json")
-            
+            pass            
         self.cursor.start_replication(
             slot_name=self.slot,
             decode=True,
@@ -190,7 +189,21 @@ class Postgres(Source):
         )
         while True:
             yield await self.queue.get()
+            
+    async def _manage_replication_slots(self):
+        """Check and manage replication slots if they exceed the max allowed."""
+        def _drop_slots():
+            with self.conn.cursor() as cur:
+            # Retrieve all replication slots that start with 'meilisync_'
+                cur.execute("SELECT slot_name FROM pg_replication_slots WHERE slot_name LIKE 'meilisync_%';")
+                meilisync_slots = cur.fetchall()
 
+                # Drop each of the retrieved slots
+                for slot in meilisync_slots:
+                    cur.execute(f"SELECT pg_drop_replication_slot('{slot[0]}');")
+
+        await asyncio.get_event_loop().run_in_executor(None, _drop_slots)
+        
     def _ping(self):
         with self.conn_dict.cursor() as cur:
             cur.execute("SELECT 1")
