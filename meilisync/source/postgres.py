@@ -34,7 +34,7 @@ class CustomDictCursor(psycopg2.extras.RealDictCursor):
 
 class Postgres(Source):
     type = SourceType.postgres
-    slot = str(uuid.uuid4()) 
+    slot = f"meilisync_{uuid.uuid4().hex}" 
 
     def __init__(
         self,
