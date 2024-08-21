@@ -34,6 +34,7 @@ class CustomDictCursor(psycopg2.extras.RealDictCursor):
 
 class Postgres(Source):
     type = SourceType.postgres
+    slot = "meilisync"
 
     def __init__(
         self,
@@ -45,7 +46,6 @@ class Postgres(Source):
         self.conn = psycopg2.connect(**self.kwargs, connection_factory=LogicalReplicationConnection)
         self.cursor = self.conn.cursor()
         self.queue = None
-        self.slot = self._generate_unique_slot_name()
         
         if self.progress:
             self.start_lsn = self.progress["start_lsn"]
@@ -195,7 +195,7 @@ class Postgres(Source):
         def _drop_slots():
             with self.conn.cursor() as cur:
             # Retrieve all replication slots that start with 'meilisync_'
-                cur.execute("SELECT slot_name FROM pg_replication_slots WHERE slot_name LIKE 'meilisync_%';")
+                cur.execute("SELECT slot_name FROM pg_replication_slots WHERE slot_name LIKE 'meilisync';")
                 meilisync_slots = cur.fetchall()
 
                 # Drop each of the retrieved slots
