@@ -188,11 +188,12 @@ class Postgres(Source):
                 },
             )
             
-        asyncio.ensure_future(
-            asyncio.get_event_loop().run_in_executor(
-                None, self.cursor.consume_stream, self._consumer
+            asyncio.ensure_future(
+                asyncio.get_event_loop().run_in_executor(
+                    None, self.cursor.consume_stream, self._consumer
+                )
             )
-        )
+            
         yield ProgressEvent(
             progress={"start_lsn": self.start_lsn},
         )
