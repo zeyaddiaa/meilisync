@@ -165,22 +165,29 @@ class Postgres(Source):
 
     async def __aiter__(self):
         self.queue = Queue()
+        
         def slot_exists():
             self.cursor.execute(f"SELECT slot_name FROM pg_replication_slots WHERE slot_name = '{self.slot}'")
             return self.cursor.fetchone() is not None
-
+        
         if not await asyncio.get_event_loop().run_in_executor(None, slot_exists):
             self.cursor.create_replication_slot(self.slot, output_plugin="wal2json")
 
-        self.cursor.start_replication(
-            slot_name=self.slot,
-            decode=True,
-            status_interval=1,
-            start_lsn=self.start_lsn,
-            options={
-                "include-lsn": "true",
-            },
-        )
+        def slot_in_use():
+            self.cursor.execute(f"SELECT active_pid FROM pg_replication_slots WHERE slot_name = '{self.slot}'")
+            return self.cursor.fetchone() is not None
+        
+        if not await asyncio.get_event_loop().run_in_executor(None, slot_in_use):
+            self.cursor.start_replication(
+                slot_name=self.slot,
+                decode=True,
+                status_interval=1,
+                start_lsn=self.start_lsn,
+                options={
+                    "include-lsn": "true",
+                },
+            )
+            
         asyncio.ensure_future(
             asyncio.get_event_loop().run_in_executor(
                 None, self.cursor.consume_stream, self._consumer
