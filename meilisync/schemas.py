@@ -20,7 +20,10 @@ class Event(ProgressEvent):
         data = {}
         for k, v in self.data.items():
             if isinstance(v, datetime.datetime):
-                v = int(v.timestamp())
+                if v.year > 0:
+                    v = int(v.timestamp())
+                else:
+                    v = None
             elif isinstance(v, datetime.date):
                 v = str(v)
             elif isinstance(v, Decimal):
