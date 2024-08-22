@@ -172,27 +172,31 @@ class Postgres(Source):
         
         if not await asyncio.get_event_loop().run_in_executor(None, slot_exists):
             self.cursor.create_replication_slot(self.slot, output_plugin="wal2json")
-
+            
         def slot_in_use():
             self.cursor.execute(f"SELECT active_pid FROM pg_replication_slots WHERE slot_name = '{self.slot}'")
-            return self.cursor.fetchone() is not None
+            result = self.cursor.fetchone()
+            return result is not None and result[0] is not None
+    
+        if await asyncio.get_event_loop().run_in_executor(None, slot_in_use):
+            print(f"Slot {self.slot} is currently in use. Exiting...")
+            return
+
+        self.cursor.start_replication(
+            slot_name=self.slot,
+            decode=True,
+            status_interval=1,
+            start_lsn=self.start_lsn,
+            options={
+                "include-lsn": "true",
+            },
+        )
         
-        if not await asyncio.get_event_loop().run_in_executor(None, slot_in_use):
-            self.cursor.start_replication(
-                slot_name=self.slot,
-                decode=True,
-                status_interval=1,
-                start_lsn=self.start_lsn,
-                options={
-                    "include-lsn": "true",
-                },
+        asyncio.ensure_future(
+            asyncio.get_event_loop().run_in_executor(
+                None, self.cursor.consume_stream, self._consumer
             )
-            
-            asyncio.ensure_future(
-                asyncio.get_event_loop().run_in_executor(
-                    None, self.cursor.consume_stream, self._consumer
-                )
-            )
+        )
             
         yield ProgressEvent(
             progress={"start_lsn": self.start_lsn},
