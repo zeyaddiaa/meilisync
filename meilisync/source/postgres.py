@@ -166,11 +166,11 @@ class Postgres(Source):
 
     async def __aiter__(self):
         self.queue = Queue()
-        await self._manage_replication_slots() 
-        try:
-            self.cursor.create_replication_slot(self.slot, output_plugin="wal2json")
-        except psycopg2.errors.DuplicateObject:  # type: ignore
-            self.slot = self._generate_unique_slot_name()
+        def slot_exists():
+            self.cursor.execute(f"SELECT slot_name FROM pg_replication_slots WHERE slot_name = '{self.slot}'")
+            return self.cursor.fetchone() is not None
+
+        if not await asyncio.get_event_loop().run_in_executor(None, slot_exists):
             self.cursor.create_replication_slot(self.slot, output_plugin="wal2json")
 
         self.cursor.start_replication(
@@ -193,51 +193,6 @@ class Postgres(Source):
         while True:
             yield await self.queue.get()
             
-
-    async def _manage_replication_slots(self):
-        """Check and manage replication slots if they exceed the max allowed."""
-        def _drop_slots():
-            attempt = 0
-            max_retries = 3
-            while attempt < max_retries:
-                try:
-                    with self.conn.cursor() as cur:
-                        # Retrieve all replication slots that start with 'meilisync_'
-                        cur.execute("SELECT slot_name, active_pid FROM pg_replication_slots WHERE slot_name LIKE 'meilisync_%'")
-                        meilisync_slots = cur.fetchall()
-
-                        for slot_name, active_pid in meilisync_slots:
-                            if active_pid:
-                                # Log the active slot and PID
-                                print(f"Slot {slot_name} is currently active with PID {active_pid}. Attempting to terminate the session.")
-
-                                # Terminate the session
-                                try:
-                                    cur.execute(f"SELECT pg_terminate_backend({active_pid});")
-                                    print(f"Terminated session with PID {active_pid} using slot {slot_name}.")
-                                except psycopg2.Error as e:
-                                    print(f"Failed to terminate session with PID {active_pid} using slot {slot_name}: {e}")
-
-                            # Try to drop the slot after terminating the session
-                            try:
-                                cur.execute(f"SELECT pg_drop_replication_slot('{slot_name}');")
-                                print(f"Dropped replication slot: {slot_name}")
-                            except psycopg2.errors.ObjectInUse:
-                                print(f"Slot {slot_name} could not be dropped because it's still in use.")
-                            except psycopg2.Error as e:
-                                print(f"Error dropping slot {slot_name}: {e}")
-
-                    # Exit the loop if successful
-                    break
-                except psycopg2.errors.AdminShutdown as e:
-                    attempt += 1
-                    print(f"AdminShutdown error occurred: {e}. Retrying ({attempt}/{max_retries})...")
-                    time.sleep(2)  # Wait before retrying
-                except psycopg2.Error as e:
-                    print(f"Unexpected error occurred: {e}.")
-                    break
-        
-        await asyncio.get_event_loop().run_in_executor(None, _drop_slots)
         
     def _ping(self):
         with self.conn_dict.cursor() as cur:
