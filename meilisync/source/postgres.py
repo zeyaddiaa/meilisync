@@ -35,7 +35,8 @@ class CustomDictCursor(psycopg2.extras.RealDictCursor):
 
 class Postgres(Source):
     type = SourceType.postgres
-
+    slot = "meilisync"
+    
     def __init__(
         self,
         progress: dict,
@@ -45,9 +46,7 @@ class Postgres(Source):
         super().__init__(progress, tables, **kwargs)
         self.conn = psycopg2.connect(**self.kwargs, connection_factory=LogicalReplicationConnection)
         self.cursor = self.conn.cursor()
-        self.queue = None
-        self.slot = self._generate_unique_slot_name()
-        
+        self.queue = None        
         if self.progress:
             self.start_lsn = self.progress["start_lsn"]
         else:
