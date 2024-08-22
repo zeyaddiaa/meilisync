@@ -30,7 +30,7 @@ class Event(ProgressEvent):
                     v = float(v)
             except Exception as e:
                 print(f"Error processing field '{k}': {e}")
-                v = 0
+                v = None
 
             if fields_mapping is not None and k in fields_mapping:
                 real_k = fields_mapping[k] or k
