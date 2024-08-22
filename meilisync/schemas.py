@@ -20,7 +20,7 @@ class Event(ProgressEvent):
         data = {}
         for k, v in self.data.items():
             if isinstance(v, datetime.datetime):
-                if v.year > 0:
+                if v.timestamp() > 0:
                     v = int(v.timestamp())
                 else:
                     v = 1
