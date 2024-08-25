@@ -202,7 +202,6 @@ class Postgres(Source):
                 "include-not-null" : "false",
                 "include-default" : "false",
                 "include-pk" : "false",
-                "numeric-data-types-as-string" : "false",
                 "pretty-print" : "false",
                 "write-in-chunks" : "false",
                 "include-transaction" : "false",
