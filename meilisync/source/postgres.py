@@ -46,7 +46,8 @@ class Postgres(Source):
         super().__init__(progress, tables, **kwargs)
         self.conn = psycopg2.connect(**self.kwargs, connection_factory=LogicalReplicationConnection)
         self.cursor = self.conn.cursor()
-        self.queue = None        
+        self.queue = None     
+           
         if self.progress:
             self.start_lsn = self.progress["start_lsn"]
         else:
@@ -189,6 +190,22 @@ class Postgres(Source):
             start_lsn=self.start_lsn,
             options={
                 "include-lsn": "true",
+                "include-types" : "true",
+                "include-typmod" : "true",
+                "include-xids" : "false",
+                "include-timestamp" : "false",
+                "include-schemas" : "false",
+                "include-type-oids" : "false",
+                "include-domain-data-type" : "false",
+                "include-column-positions" : "false",
+                "include-origin" : "false",
+                "include-not-null" : "false",
+                "include-default" : "false",
+                "include-pk" : "false",
+                "numeric-data-types-as-string" : "false",
+                "pretty-print" : "false",
+                "write-in-chunks" : "false",
+                "include-transaction" : "false",
             },
         )
         
