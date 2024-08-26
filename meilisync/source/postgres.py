@@ -88,19 +88,19 @@ class Postgres(Source):
             offset += size
             yield ret
             
-    def _consumer(self, msg: ReplicationMessage):
+    async def _consumer(self, msg: ReplicationMessage):
         payload = json.loads(msg.payload)
         next_lsn = payload["nextlsn"]
 
         changes = payload.get("change", [])
         for change in changes:
-            self.__handle_change(change, next_lsn)
+            await self.__handle_change(change, next_lsn)
 
         # Always report success to the server to avoid a “disk full” condition.
         # https://www.psycopg.org/docs/extras.html#psycopg2.extras.ReplicationCursor.consume_stream
         msg.cursor.send_feedback(flush_lsn=msg.data_start)
 
-    def __handle_change(self, change: dict[str, Any], next_lsn: str):
+    async def __handle_change(self, change: dict[str, Any], next_lsn: str):
         table = change.get("table")
         if table not in self.tables:
             return
@@ -130,7 +130,7 @@ class Postgres(Source):
         else:
             return
 
-        asyncio.create_task(
+        await asyncio.create_task(
             self.queue.put(  # type: ignore
                 Event(
                     type=event_type,
@@ -190,7 +190,7 @@ class Postgres(Source):
             yield await self.queue.get()
             
         
-    def _ping(self):
+    async def _ping(self):
         with self.conn_dict.cursor() as cur:
             cur.execute("SELECT 1")
 
