@@ -28,7 +28,11 @@ class Meili:
         self.wait_for_task_timeout = wait_for_task_timeout
 
     async def add_data(self, sync: Sync, data: list):
-        events = [Event(type=EventType.create, data=item) for item in data]
+        events = [
+            Event(type=EventType.create, data=dict(item) if isinstance(item, tuple) else item) 
+            for item in data
+        ]
+
         return await self.handle_events_by_type(sync, events, EventType.create)
 
     async def refresh_data(self, sync: Sync, data: AsyncGenerator):
