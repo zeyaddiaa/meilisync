@@ -42,11 +42,16 @@ class Postgres(Source):
     def __init__(self, progress: dict, tables: List[str], **kwargs):
         super().__init__(progress, tables, **kwargs)
         if not Postgres._pool:
-            Postgres._pool = ThreadedConnectionPool(1, 10, **self.kwargs)
+            Postgres._pool = ThreadedConnectionPool(
+                1, 
+                10,
+                connection_factory=LogicalReplicationConnection, 
+                **self.kwargs
+                )
         self.conn = Postgres._pool.getconn()
         self.conn.set_session(autocommit=True)
         self.cursor = self.conn.cursor()
-        self.queue = None     
+        self.queue = None  
            
         if self.progress:
             self.start_lsn = self.progress["start_lsn"]
@@ -136,6 +141,7 @@ class Postgres(Source):
             data=values,
             progress={"start_lsn": next_lsn},
         )
+        
         asyncio.create_task(self.queue.put(event))
 
     async def __aiter__(self):
