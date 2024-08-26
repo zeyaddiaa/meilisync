@@ -28,11 +28,7 @@ class Meili:
         self.wait_for_task_timeout = wait_for_task_timeout
 
     async def add_data(self, sync: Sync, data: list):
-        events = [
-            Event(type=EventType.create, data=dict(item) if isinstance(item, tuple) else item) 
-            for item in data
-        ]
-
+        events = [Event(type=EventType.create, data=item) for item in data]
         return await self.handle_events_by_type(sync, events, EventType.create)
 
     async def refresh_data(self, sync: Sync, data: AsyncGenerator):
@@ -88,17 +84,13 @@ class Meili:
             raise e
 
     async def handle_events(self, collection: EventCollection):
-        tasks = []
         created_events, updated_events, deleted_events = collection.pop_events
-
         for sync, events in created_events.items():
-            tasks.append(self.handle_events_by_type(sync, events, EventType.create))
+            await self.handle_events_by_type(sync, events, EventType.create)
         for sync, events in updated_events.items():
-            tasks.append(self.handle_events_by_type(sync, events, EventType.update))
+            await self.handle_events_by_type(sync, events, EventType.update)
         for sync, events in deleted_events.items():
-            tasks.append(self.handle_events_by_type(sync, events, EventType.delete))
-
-        await asyncio.gather(*tasks)
+            await self.handle_events_by_type(sync, events, EventType.delete)
 
     async def handle_plugins_pre(self, sync: Sync, event: Event):
         for plugin in self.plugins:
