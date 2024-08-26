@@ -95,9 +95,7 @@ class Postgres(Source):
         changes = payload.get("change", [])
         for change in changes:
             await self.__handle_change(change, next_lsn)
-
-        # Always report success to the server to avoid a “disk full” condition.
-        # https://www.psycopg.org/docs/extras.html#psycopg2.extras.ReplicationCursor.consume_stream
+            
         msg.cursor.send_feedback(flush_lsn=msg.data_start)
 
     async def __handle_change(self, change: dict[str, Any], next_lsn: str):
@@ -177,7 +175,7 @@ class Postgres(Source):
             },
         )
         
-        asyncio.create_task(self._consume_stream())
+        await asyncio.create_task(self._consume_stream())
             
         yield ProgressEvent(
             progress={"start_lsn": self.start_lsn},
