@@ -1,20 +1,21 @@
 import asyncio
 import json
+import uuid
 from asyncio import Queue
 from typing import List, Any
 
 import psycopg2
 import psycopg2.errors
+from psycopg2.extras import LogicalReplicationConnection, RealDictRow, RealDictCursor
 from psycopg2._psycopg import ReplicationMessage
-from psycopg2.extras import LogicalReplicationConnection
 
 from meilisync.enums import EventType, SourceType
 from meilisync.schemas import Event, ProgressEvent
 from meilisync.settings import Sync
 from meilisync.source import Source
 
-import uuid
-import time
+# Connection pooling
+from psycopg2.pool import ThreadedConnectionPool
 
 class CustomDictRow(psycopg2.extras.RealDictRow):
     def __getitem__(self, key):
@@ -36,15 +37,14 @@ class CustomDictCursor(psycopg2.extras.RealDictCursor):
 class Postgres(Source):
     type = SourceType.postgres
     slot = "meilisync"
+    _pool = None
     
-    def __init__(
-        self,
-        progress: dict,
-        tables: List[str],
-        **kwargs,
-    ):
+    def __init__(self, progress: dict, tables: List[str], **kwargs):
         super().__init__(progress, tables, **kwargs)
-        self.conn = psycopg2.connect(**self.kwargs, connection_factory=LogicalReplicationConnection)
+        if not Postgres._pool:
+            Postgres._pool = ThreadedConnectionPool(1, 10, **self.kwargs)
+        self.conn = Postgres._pool.getconn()
+        self.conn.set_session(autocommit=True)
         self.cursor = self.conn.cursor()
         self.queue = None     
            
@@ -53,19 +53,7 @@ class Postgres(Source):
         else:
             self.cursor.execute("SELECT pg_current_wal_lsn()")
             self.start_lsn = self.cursor.fetchone()[0]
-        self.conn_dict = psycopg2.connect(**self.kwargs, cursor_factory=CustomDictCursor)
-
-    async def get_current_progress(self):
-        sql = "SELECT pg_current_wal_lsn()"
-
-        def _():
-            with self.conn.cursor() as cur:
-                cur.execute(sql)
-                ret = cur.fetchone()
-                return ret[0]
-
-        start_lsn = await asyncio.get_event_loop().run_in_executor(None, _)
-        return {"start_lsn": start_lsn}
+        self.conn_dict = Postgres._pool.getconn()
 
     async def get_full_data(self, sync: Sync, size: int):
         if sync.fields:
@@ -74,7 +62,7 @@ class Postgres(Source):
             fields = "*"
         offset = 0
 
-        def _():
+        async def fetch_data():
             with self.conn_dict.cursor() as cur:
                 cur.execute(
                     f"SELECT {fields} FROM \"{sync.table}\" ORDER BY "
@@ -83,38 +71,20 @@ class Postgres(Source):
                 return cur.fetchall()
 
         while True:
-            ret = await asyncio.get_event_loop().run_in_executor(None, _)
+            ret = await asyncio.get_event_loop().run_in_executor(None, fetch_data)
             if not ret:
                 break
             offset += size
             yield ret
-            
-    def _generate_unique_slot_name(self):
-        base_slot_name = f"meilisync_{uuid.uuid4().hex}"
-        slot_name = base_slot_name
 
-        # Check if slot already exists and is active
-        while True:
-            self.cursor.execute(f"SELECT active_pid FROM pg_replication_slots WHERE slot_name = '{slot_name}'")
-            slot_info = self.cursor.fetchone()
-
-            if slot_info and slot_info[0]:  # Slot is active
-                print(f"Slot {slot_name} is already in use by PID {slot_info[0]}, generating a new slot name.")
-                slot_name = f"meilisync_{uuid.uuid4().hex}"  # Generate a new unique slot name
-            else:
-                print(f"Using slot name {slot_name}.")
-                return slot_name
-            
     def _consumer(self, msg: ReplicationMessage):
         payload = json.loads(msg.payload)
         next_lsn = payload["nextlsn"]
-
         changes = payload.get("change", [])
+
         for change in changes:
             self.__handle_change(change, next_lsn)
 
-        # Always report success to the server to avoid a “disk full” condition.
-        # https://www.psycopg.org/docs/extras.html#psycopg2.extras.ReplicationCursor.consume_stream
         msg.cursor.send_feedback(flush_lsn=msg.data_start)
 
     def __handle_change(self, change: dict[str, Any], next_lsn: str):
@@ -147,22 +117,14 @@ class Postgres(Source):
         else:
             return
 
-        asyncio.new_event_loop().run_until_complete(
-            self.queue.put(  # type: ignore
-                Event(
-                    type=event_type,
-                    table=table,
-                    data=values,
-                    progress={"start_lsn": next_lsn},
-                )
-            )
+        # Queueing the events in bulk for better performance
+        event = Event(
+            type=event_type,
+            table=table,
+            data=values,
+            progress={"start_lsn": next_lsn},
         )
-
-    async def get_count(self, sync: Sync):
-        with self.conn_dict.cursor() as cur:
-            cur.execute(f"SELECT COUNT(*) FROM \"{sync.table}\"")
-            ret = cur.fetchone()
-            return ret[0]
+        asyncio.create_task(self.queue.put(event))
 
     async def __aiter__(self):
         self.queue = Queue()
@@ -191,20 +153,7 @@ class Postgres(Source):
             options={
                 "include-lsn": "true",
                 "include-types" : "true",
-                "include-typmod" : "true",
-                "include-xids" : "false",
-                "include-timestamp" : "false",
-                "include-schemas" : "false",
-                "include-type-oids" : "false",
-                "include-domain-data-type" : "false",
-                "include-column-positions" : "false",
-                "include-origin" : "false",
-                "include-not-null" : "false",
-                "include-default" : "false",
-                "include-pk" : "false",
-                "pretty-print" : "false",
-                "write-in-chunks" : "false",
-                "include-transaction" : "false",
+                "include-pk" : "true",
             },
         )
         
@@ -214,20 +163,12 @@ class Postgres(Source):
             )
         )
             
-        yield ProgressEvent(
-            progress={"start_lsn": self.start_lsn},
-        )
+        yield ProgressEvent(progress={"start_lsn": self.start_lsn})
+        
         while True:
             yield await self.queue.get()
-            
-        
-    def _ping(self):
-        with self.conn_dict.cursor() as cur:
-            cur.execute("SELECT 1")
-
-    async def ping(self):
-        await asyncio.get_event_loop().run_in_executor(None, self._ping)
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         self.cursor.close()
-        self.conn.close()
+        Postgres._pool.putconn(self.conn)
+        Postgres._pool.putconn(self.conn_dict)
