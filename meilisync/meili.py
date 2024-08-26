@@ -118,48 +118,26 @@ class Meili:
                 event = await plugin().post_event(event)
         return event
 
-    # async def handle_events_by_type(self, sync: Sync, events: List[Event], event_type: EventType):
-    #     if not events:
-    #         return
-    #     index = self.client.index(sync.index_name)
-    #     for event in events:
-    #         await self.handle_plugins_pre(sync, event)
-    #     task = None
-    #     if event_type == EventType.create:
-    #         task = await index.add_documents(
-    #             [event.mapping_data(sync.fields) for event in events], primary_key=sync.pk
-    #         )
-    #     elif event_type == EventType.update:
-    #         task = await index.update_documents(
-    #             [event.mapping_data(sync.fields) for event in events], primary_key=sync.pk
-    #         )
-    #     elif event_type == EventType.delete:
-    #         task = await index.delete_documents([str(event.data[sync.pk]) for event in events])
-    #     for event in events:
-    #         await self.handle_plugins_post(sync, event)
-    #     return task
-    
     async def handle_events_by_type(self, sync: Sync, events: List[Event], event_type: EventType):
         if not events:
             return
         index = self.client.index(sync.index_name)
-        tasks = []
-        batched_data = [event.mapping_data(sync.fields) for event in events]
-
+        for event in events:
+            await self.handle_plugins_pre(sync, event)
+        task = None
         if event_type == EventType.create:
-            tasks.append(await index.add_documents(batched_data, primary_key=sync.pk))
+            task = await index.add_documents(
+                [event.mapping_data(sync.fields) for event in events], primary_key=sync.pk
+            )
         elif event_type == EventType.update:
-            tasks.append(await index.update_documents(batched_data, primary_key=sync.pk))
+            task = await index.update_documents(
+                [event.mapping_data(sync.fields) for event in events], primary_key=sync.pk
+            )
         elif event_type == EventType.delete:
-            tasks.append(await index.delete_documents([str(event.data[sync.pk]) for event in events]))
-
-        await asyncio.gather(*[self.client.wait_for_task(task.task_uid) for task in tasks])
-
+            task = await index.delete_documents([str(event.data[sync.pk]) for event in events])
         for event in events:
             await self.handle_plugins_post(sync, event)
-
-        return tasks
-
+        return task
 
     async def handle_event(self, event: Event, sync: Sync):
         event = await self.handle_plugins_pre(sync, event)
@@ -171,5 +149,3 @@ class Meili:
         elif event.type == EventType.delete:
             await index.delete_documents([str(event.data[sync.pk])])
         await self.handle_plugins_post(sync, event)
-    
-

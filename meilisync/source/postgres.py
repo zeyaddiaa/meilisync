@@ -1,21 +1,20 @@
 import asyncio
 import json
-import uuid
 from asyncio import Queue
 from typing import List, Any
 
 import psycopg2
 import psycopg2.errors
-from psycopg2.extras import LogicalReplicationConnection, RealDictRow, RealDictCursor
 from psycopg2._psycopg import ReplicationMessage
+from psycopg2.extras import LogicalReplicationConnection
 
 from meilisync.enums import EventType, SourceType
 from meilisync.schemas import Event, ProgressEvent
 from meilisync.settings import Sync
 from meilisync.source import Source
 
-# Connection pooling
-from psycopg2.pool import ThreadedConnectionPool
+import uuid
+import time
 
 class CustomDictRow(psycopg2.extras.RealDictRow):
     def __getitem__(self, key):
@@ -37,21 +36,17 @@ class CustomDictCursor(psycopg2.extras.RealDictCursor):
 class Postgres(Source):
     type = SourceType.postgres
     slot = "meilisync"
-    _pool = None
     
-    def __init__(self, progress: dict, tables: List[str], **kwargs):
+    def __init__(
+        self,
+        progress: dict,
+        tables: List[str],
+        **kwargs,
+    ):
         super().__init__(progress, tables, **kwargs)
-        if not Postgres._pool:
-            Postgres._pool = ThreadedConnectionPool(
-                1, 
-                10,
-                connection_factory=LogicalReplicationConnection, 
-                **self.kwargs
-                )
-        self.conn = Postgres._pool.getconn()
+        self.conn = psycopg2.connect(**self.kwargs, connection_factory=LogicalReplicationConnection)
         self.cursor = self.conn.cursor()
-        self.queue = None  
-           
+        self.queue = None        
         if self.progress:
             self.start_lsn = self.progress["start_lsn"]
         else:
@@ -68,7 +63,7 @@ class Postgres(Source):
                 ret = cur.fetchone()
                 return ret[0]
 
-        start_lsn = await asyncio.get_event_loop().run_in_executor(None, _)
+        start_lsn = await asyncio.to_thread(_)
         return {"start_lsn": start_lsn}
 
     async def get_full_data(self, sync: Sync, size: int):
@@ -87,20 +82,22 @@ class Postgres(Source):
                 return cur.fetchall()
 
         while True:
-            ret = await asyncio.get_event_loop().run_in_executor(None, _)
+            ret = await asyncio.to_thread( _)
             if not ret:
                 break
             offset += size
             yield ret
-
+            
     def _consumer(self, msg: ReplicationMessage):
         payload = json.loads(msg.payload)
         next_lsn = payload["nextlsn"]
-        changes = payload.get("change", [])
 
+        changes = payload.get("change", [])
         for change in changes:
             self.__handle_change(change, next_lsn)
 
+        # Always report success to the server to avoid a “disk full” condition.
+        # https://www.psycopg.org/docs/extras.html#psycopg2.extras.ReplicationCursor.consume_stream
         msg.cursor.send_feedback(flush_lsn=msg.data_start)
 
     def __handle_change(self, change: dict[str, Any], next_lsn: str):
@@ -133,14 +130,17 @@ class Postgres(Source):
         else:
             return
 
-        event = Event(
-            type=event_type,
-            table=table,
-            data=values,
-            progress={"start_lsn": next_lsn},
+        asyncio.create_task(
+            self.queue.put(  # type: ignore
+                Event(
+                    type=event_type,
+                    table=table,
+                    data=values,
+                    progress={"start_lsn": next_lsn},
+                )
+            )
         )
         
-        asyncio.create_task(self.queue.put(event))
 
     async def get_count(self, sync: Sync):
         with self.conn_dict.cursor() as cur:
@@ -155,7 +155,7 @@ class Postgres(Source):
             self.cursor.execute(f"SELECT slot_name FROM pg_replication_slots WHERE slot_name = '{self.slot}'")
             return self.cursor.fetchone() is not None
         
-        if not await asyncio.get_event_loop().run_in_executor(None, slot_exists):
+        if not await asyncio.to_thread(slot_exists):
             self.cursor.create_replication_slot(self.slot, output_plugin="wal2json")
             
         def slot_in_use():
@@ -163,7 +163,7 @@ class Postgres(Source):
             result = self.cursor.fetchone()
             return result is not None and result[0] is not None
     
-        if await asyncio.get_event_loop().run_in_executor(None, slot_in_use):
+        if await asyncio.to_thread(slot_in_use):
             print(f"Slot {self.slot} is currently in use. Exiting...")
             return
 
@@ -174,19 +174,18 @@ class Postgres(Source):
             start_lsn=self.start_lsn,
             options={
                 "include-lsn": "true",
-                "include-types" : "true",
-                "include-pk" : "true",
             },
         )
         
-        asyncio.ensure_future(
-            asyncio.get_event_loop().run_in_executor(
-                None, self.cursor.consume_stream, self._consumer
+        asyncio.create_task(
+            asyncio.to_thread(
+                self.cursor.consume_stream, self._consumer
             )
         )
             
-        yield ProgressEvent(progress={"start_lsn": self.start_lsn})
-        
+        yield ProgressEvent(
+            progress={"start_lsn": self.start_lsn},
+        )
         while True:
             yield await self.queue.get()
             
@@ -196,10 +195,10 @@ class Postgres(Source):
             cur.execute("SELECT 1")
 
     async def ping(self):
-        await asyncio.get_event_loop().run_in_executor(None, self._ping)
+        await asyncio.to_thread(self._ping)
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         self.cursor.close()
-        Postgres._pool.putconn(self.conn)
-        Postgres._pool.putconn(self.conn_dict)
-
+        self.conn.close()
+        
+        
