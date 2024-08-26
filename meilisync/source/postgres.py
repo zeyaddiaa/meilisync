@@ -177,17 +177,21 @@ class Postgres(Source):
             },
         )
         
-        asyncio.create_task(
-            asyncio.to_thread(
-                self.cursor.consume_stream, self._consumer
-            )
-        )
+        asyncio.create_task(self._consume_stream())
             
         yield ProgressEvent(
             progress={"start_lsn": self.start_lsn},
         )
         while True:
             yield await self.queue.get()
+            
+    async def _consume_stream(self):
+        while True:
+            try:
+                await asyncio.to_thread(self.cursor.consume_stream, self._consumer)
+            except Exception as e:
+                print(f"Error in consuming stream: {e}")
+                await asyncio.sleep(1)
             
         
     async def _ping(self):
