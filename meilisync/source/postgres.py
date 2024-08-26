@@ -49,7 +49,6 @@ class Postgres(Source):
                 **self.kwargs
                 )
         self.conn = Postgres._pool.getconn()
-        self.conn.set_session(autocommit=True)
         self.cursor = self.conn.cursor()
         self.queue = None  
            
