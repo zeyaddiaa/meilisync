@@ -84,13 +84,17 @@ class Meili:
             raise e
 
     async def handle_events(self, collection: EventCollection):
+        tasks = []
         created_events, updated_events, deleted_events = collection.pop_events
+
         for sync, events in created_events.items():
-            await self.handle_events_by_type(sync, events, EventType.create)
+            tasks.append(self.handle_events_by_type(sync, events, EventType.create))
         for sync, events in updated_events.items():
-            await self.handle_events_by_type(sync, events, EventType.update)
+            tasks.append(self.handle_events_by_type(sync, events, EventType.update))
         for sync, events in deleted_events.items():
-            await self.handle_events_by_type(sync, events, EventType.delete)
+            tasks.append(self.handle_events_by_type(sync, events, EventType.delete))
+
+        await asyncio.gather(*tasks)
 
     async def handle_plugins_pre(self, sync: Sync, event: Event):
         for plugin in self.plugins:
@@ -161,27 +165,15 @@ class Meili:
         return tasks
 
 
-    # async def handle_event(self, event: Event, sync: Sync):
-    #     event = await self.handle_plugins_pre(sync, event)
-    #     index = self.client.index(sync.index_name)
-    #     if event.type == EventType.create:
-    #         await index.add_documents([event.mapping_data(sync.fields)], primary_key=sync.pk)
-    #     elif event.type == EventType.update:
-    #         await index.update_documents([event.mapping_data(sync.fields)], primary_key=sync.pk)
-    #     elif event.type == EventType.delete:
-    #         await index.delete_documents([str(event.data[sync.pk])])
-    #     await self.handle_plugins_post(sync, event)
-        
-    async def handle_event(self, collection: EventCollection):
-        tasks = []
-        created_events, updated_events, deleted_events = collection.pop_events
-
-        for sync, events in created_events.items():
-            tasks.append(self.handle_events_by_type(sync, events, EventType.create))
-        for sync, events in updated_events.items():
-            tasks.append(self.handle_events_by_type(sync, events, EventType.update))
-        for sync, events in deleted_events.items():
-            tasks.append(self.handle_events_by_type(sync, events, EventType.delete))
-
-        await asyncio.gather(*tasks)
+    async def handle_event(self, event: Event, sync: Sync):
+        event = await self.handle_plugins_pre(sync, event)
+        index = self.client.index(sync.index_name)
+        if event.type == EventType.create:
+            await index.add_documents([event.mapping_data(sync.fields)], primary_key=sync.pk)
+        elif event.type == EventType.update:
+            await index.update_documents([event.mapping_data(sync.fields)], primary_key=sync.pk)
+        elif event.type == EventType.delete:
+            await index.delete_documents([str(event.data[sync.pk])])
+        await self.handle_plugins_post(sync, event)
+    
 
