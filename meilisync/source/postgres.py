@@ -55,6 +55,18 @@ class Postgres(Source):
             self.start_lsn = self.cursor.fetchone()[0]
         self.conn_dict = Postgres._pool.getconn()
 
+    async def get_current_progress(self):
+        sql = "SELECT pg_current_wal_lsn()"
+
+        def _():
+            with self.conn.cursor() as cur:
+                cur.execute(sql)
+                ret = cur.fetchone()
+                return ret[0]
+
+        start_lsn = await asyncio.get_event_loop().run_in_executor(None, _)
+        return {"start_lsn": start_lsn}
+
     async def get_full_data(self, sync: Sync, size: int):
         if sync.fields:
             fields = ", ".join(f"\"{field}\" as \"{sync.fields[field] or field}\"" for field in sync.fields)
@@ -62,7 +74,7 @@ class Postgres(Source):
             fields = "*"
         offset = 0
 
-        async def fetch_data():
+        def _():
             with self.conn_dict.cursor() as cur:
                 cur.execute(
                     f"SELECT {fields} FROM \"{sync.table}\" ORDER BY "
@@ -71,7 +83,7 @@ class Postgres(Source):
                 return cur.fetchall()
 
         while True:
-            ret = await asyncio.get_event_loop().run_in_executor(None, fetch_data)
+            ret = await asyncio.get_event_loop().run_in_executor(None, _)
             if not ret:
                 break
             offset += size
@@ -167,8 +179,17 @@ class Postgres(Source):
         
         while True:
             yield await self.queue.get()
+            
+        
+    def _ping(self):
+        with self.conn_dict.cursor() as cur:
+            cur.execute("SELECT 1")
+
+    async def ping(self):
+        await asyncio.get_event_loop().run_in_executor(None, self._ping)
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         self.cursor.close()
         Postgres._pool.putconn(self.conn)
         Postgres._pool.putconn(self.conn_dict)
+
