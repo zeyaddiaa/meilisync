@@ -178,7 +178,7 @@ class Postgres(Source):
         )
         
         asyncio.ensure_future(
-            asyncio.get_event_loop().run_in_executor(
+            asyncio.new_event_loop().run_in_executor(
                 self.executor,self.cursor.consume_stream,self._consumer
             )
         )
