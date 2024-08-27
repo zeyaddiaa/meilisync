@@ -36,7 +36,6 @@ class CustomDictCursor(psycopg2.extras.RealDictCursor):
 class Postgres(Source):
     type = SourceType.postgres
     slot = "meilisync"
-    executor =None
     
     def __init__(
         self,
@@ -47,7 +46,8 @@ class Postgres(Source):
         super().__init__(progress, tables, **kwargs)
         self.conn = psycopg2.connect(**self.kwargs, connection_factory=LogicalReplicationConnection)
         self.cursor = self.conn.cursor()
-        self.queue = None        
+        self.queue = Queue(maxsize=1000)  
+          
         if self.progress:
             self.start_lsn = self.progress["start_lsn"]
         else:
@@ -55,7 +55,7 @@ class Postgres(Source):
             self.start_lsn = self.cursor.fetchone()[0]
         self.conn_dict = psycopg2.connect(**self.kwargs, cursor_factory=CustomDictCursor)
 
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)
         
     async def get_current_progress(self):
         sql = "SELECT pg_current_wal_lsn()"
@@ -150,7 +150,6 @@ class Postgres(Source):
             return ret[0]
 
     async def __aiter__(self):
-        self.queue = Queue()
         
         def slot_exists():
             self.cursor.execute(f"SELECT slot_name FROM pg_replication_slots WHERE slot_name = '{self.slot}'")
