@@ -13,8 +13,8 @@ from meilisync.schemas import Event, ProgressEvent
 from meilisync.settings import Sync
 from meilisync.source import Source
 
-import uuid
-import time
+import concurrent.futures
+
 
 class CustomDictRow(psycopg2.extras.RealDictRow):
     def __getitem__(self, key):
@@ -36,6 +36,7 @@ class CustomDictCursor(psycopg2.extras.RealDictCursor):
 class Postgres(Source):
     type = SourceType.postgres
     slot = "meilisync"
+    executor =None
     
     def __init__(
         self,
@@ -54,6 +55,8 @@ class Postgres(Source):
             self.start_lsn = self.cursor.fetchone()[0]
         self.conn_dict = psycopg2.connect(**self.kwargs, cursor_factory=CustomDictCursor)
 
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
+        
     async def get_current_progress(self):
         sql = "SELECT pg_current_wal_lsn()"
 
@@ -63,7 +66,7 @@ class Postgres(Source):
                 ret = cur.fetchone()
                 return ret[0]
 
-        start_lsn = await asyncio.to_thread(_)
+        start_lsn = await asyncio.get_event_loop().run_in_executor(self.executor, _)
         return {"start_lsn": start_lsn}
 
     async def get_full_data(self, sync: Sync, size: int):
@@ -82,23 +85,23 @@ class Postgres(Source):
                 return cur.fetchall()
 
         while True:
-            ret = await asyncio.to_thread( _)
+            ret = await asyncio.get_event_loop().run_in_executor(self.executor, _)
             if not ret:
                 break
             offset += size
             yield ret
             
-    async def _consumer(self, msg: ReplicationMessage):
+    def _consumer(self, msg: ReplicationMessage):
         payload = json.loads(msg.payload)
         next_lsn = payload["nextlsn"]
 
         changes = payload.get("change", [])
         for change in changes:
-            await self.__handle_change(change, next_lsn)
+            self.__handle_change(change, next_lsn)
             
         msg.cursor.send_feedback(flush_lsn=msg.data_start)
 
-    async def __handle_change(self, change: dict[str, Any], next_lsn: str):
+    def __handle_change(self, change: dict[str, Any], next_lsn: str):
         table = change.get("table")
         if table not in self.tables:
             return
@@ -128,7 +131,7 @@ class Postgres(Source):
         else:
             return
 
-        await asyncio.create_task(
+        asyncio.get_event_loop().run_until_complete(
             self.queue.put(  # type: ignore
                 Event(
                     type=event_type,
@@ -153,7 +156,7 @@ class Postgres(Source):
             self.cursor.execute(f"SELECT slot_name FROM pg_replication_slots WHERE slot_name = '{self.slot}'")
             return self.cursor.fetchone() is not None
         
-        if not await asyncio.to_thread(slot_exists):
+        if not await asyncio.get_event_loop().run_in_executor(self.executor,slot_exists):
             self.cursor.create_replication_slot(self.slot, output_plugin="wal2json")
             
         def slot_in_use():
@@ -161,7 +164,7 @@ class Postgres(Source):
             result = self.cursor.fetchone()
             return result is not None and result[0] is not None
     
-        if await asyncio.to_thread(slot_in_use):
+        if await asyncio.get_event_loop().run_in_executor(self.executor,slot_in_use):
             print(f"Slot {self.slot} is currently in use. Exiting...")
             return
 
@@ -175,7 +178,11 @@ class Postgres(Source):
             },
         )
         
-        await asyncio.create_task(self._consume_stream())
+        asyncio.ensure_future(
+            asyncio.get_event_loop().run_in_executor(
+                self.executor,self.cursor.consume_stream,self._consumer
+            )
+        )
             
         yield ProgressEvent(
             progress={"start_lsn": self.start_lsn},
@@ -183,21 +190,13 @@ class Postgres(Source):
         while True:
             yield await self.queue.get()
             
-    async def _consume_stream(self):
-        while True:
-            try:
-                await asyncio.to_thread(self.cursor.consume_stream, self._consumer)
-            except Exception as e:
-                print(f"Error in consuming stream: {e}")
-                await asyncio.sleep(1)
-            
         
-    async def _ping(self):
+    def _ping(self):
         with self.conn_dict.cursor() as cur:
             cur.execute("SELECT 1")
 
     async def ping(self):
-        await asyncio.to_thread(self._ping)
+        await asyncio.get_event_loop().run_in_executor(self.executor, self._ping)
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         self.cursor.close()
